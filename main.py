@@ -103,7 +103,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DART 공시 크롤러", version="0.3.0", lifespan=lifespan)
 
-_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+_default_origins = "http://localhost:3000,http://localhost,capacitor://localhost,https://localhost"
+_origins = os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
