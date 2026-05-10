@@ -48,8 +48,7 @@ async def find_corp_codes(query: str) -> list[dict]:
         for name, entries in _corp_map.items()
         if query_lower in name.lower()
         for entry in entries
-        if entry.get("stock_code")  # 상장사만
     ]
-    # 이름 길이 기준 정렬: 짧을수록 검색어와 더 정확히 일치
-    matches.sort(key=lambda e: len(e["corp_name"]))
+    # 상장사 우선, 이름 길이 기준 정렬 (짧을수록 더 정확히 일치)
+    matches.sort(key=lambda e: (not bool(e.get("stock_code")), len(e["corp_name"])))
     return matches[:30]

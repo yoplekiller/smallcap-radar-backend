@@ -80,6 +80,26 @@ async def search_disclosures(corp_name: str, days: int = 30) -> list[dict]:
     return merged
 
 
+async def fetch_company_disclosures_by_code(corp_code: str, days: int = 90) -> list[dict]:
+    """corp_code로 특정 회사의 최근 N일 공시 이력 조회"""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            f"{DART_BASE_URL}/list.json",
+            params={
+                "crtfc_key": DART_API_KEY,
+                "corp_code": corp_code,
+                "bgn_de": _days_ago(days),
+                "end_de": _today(),
+                "last_reprt_at": "N",
+                "page_no": 1,
+                "page_count": 100,
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+    return data.get("list", []) if data.get("status") == "000" else []
+
+
 async def fetch_disclosure_detail(rcept_no: str) -> dict:
     """공시 상세 내용 조회"""
     async with httpx.AsyncClient() as client:
