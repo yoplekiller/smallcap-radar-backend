@@ -1,9 +1,11 @@
 import httpx
 import asyncio
+import time
 
 SMALL_CAP_THRESHOLD = 300_000_000_000  # 3000억
+PRICE_CACHE_TTL = 60  # 60초마다 갱신
 
-_stock_cache: dict[str, dict | None] = {}  # ticker -> {market_cap, price, change_rate, change_amount}
+_stock_cache: dict[str, tuple[float, dict | None]] = {}  # ticker -> (fetched_at, info)
 
 NAVER_API = "https://m.stock.naver.com/api/stock/{ticker}/integration"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -41,17 +43,16 @@ async def filter_small_cap_disclosures(disclosures: list[dict]) -> list[dict]:
 
 async def fetch_stock_price(ticker: str) -> dict | None:
     """단일 종목 현재가/등락률/시총 조회"""
-    if ticker not in _stock_cache:
-        info_map = await _fetch_stock_infos([ticker])
-        return info_map.get(ticker)
-    return _stock_cache.get(ticker)
+    info_map = await _fetch_stock_infos([ticker])
+    return info_map.get(ticker)
 
 
 async def _fetch_stock_infos(tickers: list[str]) -> dict[str, dict | None]:
-    """단일 httpx 클라이언트로 병렬 주식 정보 조회 (캐싱)"""
-    uncached = [t for t in tickers if t not in _stock_cache]
+    """단일 httpx 클라이언트로 병렬 주식 정보 조회 (TTL 60초 캐싱)"""
+    now = time.time()
+    stale = [t for t in tickers if t not in _stock_cache or now - _stock_cache[t][0] > PRICE_CACHE_TTL]
 
-    if uncached:
+    if stale:
         semaphore = asyncio.Semaphore(20)
 
         async def fetch_one(client: httpx.AsyncClient, ticker: str) -> tuple[str, dict | None]:
@@ -70,13 +71,13 @@ async def _fetch_stock_infos(tickers: list[str]) -> dict[str, dict | None]:
 
         limits = httpx.Limits(max_connections=30, max_keepalive_connections=20)
         async with httpx.AsyncClient(limits=limits) as client:
-            results = await asyncio.gather(*[fetch_one(client, t) for t in uncached])
+            results = await asyncio.gather(*[fetch_one(client, t) for t in stale])
 
         for ticker, info in results:
-            if info is not None:  # 실패한 요청은 캐시 제외 → 다음 요청 때 재시도
-                _stock_cache[ticker] = info
+            if info is not None:
+                _stock_cache[ticker] = (now, info)
 
-    return {t: _stock_cache.get(t) for t in tickers}
+    return {t: _stock_cache[t][1] if t in _stock_cache else None for t in tickers}
 
 
 def _parse_stock_info(data: dict) -> dict | None:

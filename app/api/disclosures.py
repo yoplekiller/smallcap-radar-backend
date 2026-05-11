@@ -42,6 +42,19 @@ async def analyze_one(disclosure: dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/companies/search")
+async def search_companies(q: str):
+    """회사명으로 회사 목록 조회 — 공시 없어도 검색 가능 (포트폴리오 종목 추가용)"""
+    from app.services.corp_code_service import find_corp_codes
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="검색어를 입력하세요")
+    try:
+        corps = await find_corp_codes(q.strip())
+        return {"count": len(corps), "data": corps}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/search")
 async def search(q: str, days: int = 30):
     """회사명으로 공시 검색"""
