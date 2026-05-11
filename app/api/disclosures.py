@@ -80,11 +80,7 @@ async def analyze_earnings_endpoint(disclosure: dict[str, Any]):
         from app.services.dart_service import fetch_operating_profit
 
         profit_data = await fetch_operating_profit(corp_code, rcept_dt)
-        if not profit_data:
-            result = await analyze_disclosure(disclosure)
-            return result
-
-        result = await analyze_earnings_disclosure(disclosure, profit_data)
+        result = await analyze_earnings_disclosure(disclosure, profit_data or {})
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

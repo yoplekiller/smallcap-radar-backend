@@ -105,11 +105,17 @@ EARNINGS_PROMPT = """당신은 대한민국 소형주 전문 애널리스트입�
 - 이 실적이 소형주 투자자 관점에서 어떤 의미인지 판단
 - 성장세/수익성/시장 기대치 충족 여부를 간결하게 평가
 - 당기 영업이익이 음수(적자)인 경우: 반드시 "여전히 적자" 또는 "손실 지속"임을 명시할 것. 손실이 줄었더라도 "개선"이라는 단어만 쓰지 말고 "적자 폭 축소"처럼 적자 상태임을 드러낼 것
+- 영업이익 데이터가 없을 경우: 공시 제목에서 호재/악재 여부를 판단해 weather를 결정할 것
 
-말투 규칙: summary와 assessment는 반드시 구어체 종결어미(-음, -함, -있음, -없음, -임)로 작성. 예) "~있다" → "~있음", "~했다" → "~했음", "~이다" → "~임".
+weather 판정 기준:
+- "sunny": 흑자 유지/전환, 이익 증가, 어닝 서프라이즈
+- "cloudy": 적자 유지/전환, 이익 대폭 감소, 어닝 쇼크
+- "neutral": 데이터 없거나 보합
+
+말투 규칙: summary와 assessment는 반드시 구어체 종결어미(-음, -함, -있음, -없음, -임)로 작성.
 
 응답 형식 (JSON만, 다른 텍스트 없이):
-{{"summary": "핵심 실적 요약 1~2줄", "assessment": "투자자 관점 영향 전망 한 줄"}}"""
+{{"summary": "핵심 실적 요약 1~2줄", "assessment": "투자자 관점 영향 전망 한 줄", "weather": "sunny 또는 cloudy 또는 neutral"}}"""
 
 
 def _parse_amount(amount_str: str) -> int | None:
@@ -177,8 +183,9 @@ async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> di
     if cached:
         return {**disclosure, "ai": cached}
 
-    curr_val = _parse_amount(profit_data.get("current", ""))
-    prev_val = _parse_amount(profit_data.get("previous", ""))
+    has_profit_data = bool(profit_data)
+    curr_val = _parse_amount(profit_data.get("current", "")) if has_profit_data else None
+    prev_val = _parse_amount(profit_data.get("previous", "")) if has_profit_data else None
     weather, change_pct = _calc_weather(curr_val, prev_val)
 
     change_str = (
@@ -221,6 +228,12 @@ async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> di
                 shock_data["consensus_억"] = consensus["operating_profit_억"]
         except Exception:
             pass
+
+    # profit_data 없으면 AI가 공시 제목 기반으로 추론한 weather 사용
+    if not has_profit_data and "weather" in ai_result:
+        ai_weather = ai_result["weather"]
+        if ai_weather in ("sunny", "cloudy", "neutral"):
+            weather = ai_weather
 
     sentiment = "positive" if weather == "sunny" else "negative" if weather == "cloudy" else "neutral"
     result_ai = {
