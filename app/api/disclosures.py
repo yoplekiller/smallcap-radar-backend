@@ -202,6 +202,31 @@ async def market_cap_compare_endpoint(body: dict[str, Any]):
     return {**result, "market_cap_억_현재": market_cap_억}
 
 
+@router.get("/price-history/{stock_code}")
+async def get_price_history(stock_code: str, count: int = 30):
+    """네이버 금융 일별 종가 조회 (포트폴리오 차트용)"""
+    url = (
+        f"https://fchart.stock.naver.com/sise.nhn"
+        f"?symbol={stock_code}&timeframe=day&count={count}&requestType=0"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+        data = []
+        for line in r.text.splitlines():
+            line = line.strip()
+            if not line.startswith("<item"):
+                continue
+            raw = line.replace('<item data="', "").replace('"/>', "").strip()
+            parts = raw.split("|")
+            if len(parts) >= 5 and parts[4]:
+                data.append({"date": parts[0], "close": int(parts[4])})
+        return {"stock_code": stock_code, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/debug/naver/{ticker}")
 async def debug_naver(ticker: str):
     """Naver API 응답 원본 확인용"""
