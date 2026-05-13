@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.services.alert_engine import AlertResult, evaluate_disclosure
 from app.services.alert_rules import RULES
-from app.services.alert_sender import send_slack_alert, send_web_push_alerts_batch
+from app.services.alert_sender import send_slack_alert, send_push_alerts_batch
 from app.services.alert_store import (
     get_history,
     get_last_checked_at,
@@ -155,7 +155,7 @@ async def run_alert_check(days: int = 1) -> dict:
                 })
 
         if new_alerts:
-            await send_web_push_alerts_batch(new_alerts)
+            await send_push_alerts_batch(new_alerts)
 
         set_last_checked_at(datetime.now(timezone.utc))
 
