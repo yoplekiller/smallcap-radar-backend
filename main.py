@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.disclosures import router as disclosures_router
 from app.api.alerts import router as alerts_router, run_alert_check
 from app.api.push import router as push_router
+from app.api.market import router as market_router
 from app.services.price_tracker import run_price_tracking
 
 _scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
@@ -117,6 +118,7 @@ app.add_middleware(
 app.include_router(disclosures_router)
 app.include_router(alerts_router)
 app.include_router(push_router)
+app.include_router(market_router)
 
 
 @app.get("/health")
