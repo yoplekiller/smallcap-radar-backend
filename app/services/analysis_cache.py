@@ -7,46 +7,9 @@ import json
 import os
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
+from sqlalchemy import text
 
-load_dotenv()
-
-_db_url = os.getenv("DATABASE_URL", "")
-
-# ── PostgreSQL 모드 ──────────────────────────────────────────────────────────
-_USE_DB = bool(_db_url)
-_engine = None
-
-if _USE_DB:
-    from sqlalchemy import create_engine, text
-
-    # postgres:// → postgresql+psycopg2:// (Railway 구버전 URL 대응)
-    _engine_url = _db_url
-    if _engine_url.startswith("postgres://"):
-        _engine_url = "postgresql+psycopg2://" + _engine_url[len("postgres://"):]
-    elif _engine_url.startswith("postgresql://"):
-        _engine_url = "postgresql+psycopg2://" + _engine_url[len("postgresql://"):]
-
-    _engine = create_engine(
-        _engine_url,
-        pool_pre_ping=True,   # 유휴 연결 자동 재연결
-        pool_size=2,
-        max_overflow=3,
-    )
-
-    try:
-        with _engine.begin() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS analysis_cache (
-                    rcept_no TEXT PRIMARY KEY,
-                    data     JSONB        NOT NULL,
-                    cached_at TIMESTAMPTZ DEFAULT NOW()
-                )
-            """))
-        print("[cache] PostgreSQL 테이블 준비 완료")
-    except Exception as e:
-        print(f"[cache] DB 초기화 실패, 파일 캐시로 동작: {e}")
-        _USE_DB = False
+from app.db import USE_DB as _USE_DB, engine
 
 # ── 파일 폴백 경로 (로컬 / DB 실패 시) ──────────────────────────────────────
 _CACHE_PATH = os.path.join(
@@ -59,8 +22,6 @@ _mem: dict[str, dict] = {}
 _dirty_count = 0
 _FLUSH_EVERY = 10
 
-
-# ── 내부 헬퍼 ────────────────────────────────────────────────────────────────
 
 def _load_file() -> dict:
     try:
@@ -75,7 +36,7 @@ def _migrate_file_to_db(data: dict) -> None:
     if not data:
         return
     try:
-        with _engine.begin() as conn:
+        with engine.begin() as conn:
             for rcept_no, entry in data.items():
                 conn.execute(
                     text("""
@@ -90,21 +51,18 @@ def _migrate_file_to_db(data: dict) -> None:
         print(f"[cache] 마이그레이션 실패: {e}")
 
 
-# ── 공개 API ─────────────────────────────────────────────────────────────────
-
 def load_from_disk() -> int:
     """서버 시작 시 1회 호출. 저장소 → 메모리 로드."""
     global _mem
     if _USE_DB:
         try:
-            with _engine.connect() as conn:
+            with engine.connect() as conn:
                 rows = conn.execute(
                     text("SELECT rcept_no, data FROM analysis_cache")
                 ).fetchall()
                 for rcept_no, data in rows:
                     _mem[rcept_no] = data if isinstance(data, dict) else json.loads(data)
 
-            # DB가 비어 있고 파일 캐시가 있으면 → 자동 마이그레이션
             if not _mem:
                 file_data = _load_file()
                 if file_data:
@@ -134,7 +92,7 @@ def put(rcept_no: str, ai_result: dict) -> None:
 
     if _USE_DB:
         try:
-            with _engine.begin() as conn:
+            with engine.begin() as conn:
                 conn.execute(
                     text("""
                         INSERT INTO analysis_cache (rcept_no, data, cached_at)

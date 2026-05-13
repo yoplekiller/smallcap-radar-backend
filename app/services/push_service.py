@@ -5,6 +5,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pywebpush import WebPushException, webpush
+from sqlalchemy import text
+
+from app.db import USE_DB, engine
 
 load_dotenv()
 
@@ -16,6 +19,16 @@ _SUBS_FILE = Path(__file__).parent.parent.parent / "data" / "push_subscriptions.
 
 
 def _load() -> list[dict]:
+    if USE_DB:
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT sub_data FROM push_subscriptions")
+                ).fetchall()
+                return [r[0] if isinstance(r[0], dict) else json.loads(r[0]) for r in rows]
+        except Exception as e:
+            print(f"[push] DB 로드 실패: {e}")
+
     if _SUBS_FILE.exists():
         try:
             return json.loads(_SUBS_FILE.read_text(encoding="utf-8"))
@@ -24,22 +37,48 @@ def _load() -> list[dict]:
     return []
 
 
-def _save(subs: list[dict]) -> None:
+def _save_file(subs: list[dict]) -> None:
     _SUBS_FILE.parent.mkdir(exist_ok=True)
     _SUBS_FILE.write_text(json.dumps(subs, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def add_subscription(sub: dict) -> None:
-    subs = _load()
     endpoint = sub.get("endpoint", "")
+    if USE_DB:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO push_subscriptions (endpoint, sub_data)
+                        VALUES (:ep, :data::jsonb)
+                        ON CONFLICT (endpoint) DO UPDATE SET sub_data = EXCLUDED.sub_data
+                    """),
+                    {"ep": endpoint, "data": json.dumps(sub, ensure_ascii=False)},
+                )
+            return
+        except Exception as e:
+            print(f"[push] DB 저장 실패: {e}")
+
+    subs = _load()
     if not any(s.get("endpoint") == endpoint for s in subs):
         subs.append(sub)
-        _save(subs)
+        _save_file(subs)
 
 
 def remove_subscription(endpoint: str) -> None:
+    if USE_DB:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("DELETE FROM push_subscriptions WHERE endpoint = :ep"),
+                    {"ep": endpoint},
+                )
+            return
+        except Exception as e:
+            print(f"[push] DB 삭제 실패: {e}")
+
     subs = [s for s in _load() if s.get("endpoint") != endpoint]
-    _save(subs)
+    _save_file(subs)
 
 
 def subscription_count() -> int:
@@ -53,7 +92,6 @@ async def send_web_push(title: str, body: str, url: str = "/") -> dict[str, int]
 
     payload = json.dumps({"title": title, "body": body, "url": url})
     sent, failed, removed = 0, 0, 0
-    dead: list[str] = []
 
     for sub in subs:
         try:
@@ -66,14 +104,11 @@ async def send_web_push(title: str, body: str, url: str = "/") -> dict[str, int]
             sent += 1
         except WebPushException as e:
             if e.response is not None and e.response.status_code in (404, 410):
-                dead.append(sub.get("endpoint", ""))
+                remove_subscription(sub.get("endpoint", ""))
                 removed += 1
             else:
                 failed += 1
         except Exception:
             failed += 1
-
-    if dead:
-        _save([s for s in subs if s.get("endpoint") not in dead])
 
     return {"sent": sent, "failed": failed, "removed": removed}
