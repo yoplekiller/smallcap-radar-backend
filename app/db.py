@@ -14,6 +14,8 @@ USE_DB = False
 
 _db_url = os.getenv("DATABASE_URL", "")
 
+print(f"[db] DATABASE_URL {'설정됨 (' + _db_url[:20] + '...)' if _db_url else '없음 → 파일 모드'}")
+
 if _db_url:
     from sqlalchemy import create_engine, text
 
@@ -23,7 +25,18 @@ if _db_url:
     elif _url.startswith("postgresql://"):
         _url = "postgresql+psycopg2://" + _url[len("postgresql://"):]
 
-    engine = create_engine(_url, pool_pre_ping=True, pool_size=3, max_overflow=5)
+    # Railway PostgreSQL은 SSL 필요
+    _connect_args = {}
+    if "railway" in _url or "railway" in _db_url:
+        _connect_args = {"sslmode": "require"}
+
+    engine = create_engine(
+        _url,
+        pool_pre_ping=True,
+        pool_size=3,
+        max_overflow=5,
+        connect_args=_connect_args,
+    )
 
     try:
         with engine.begin() as conn:
