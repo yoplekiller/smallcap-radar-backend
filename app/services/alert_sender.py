@@ -116,14 +116,14 @@ async def send_slack_alerts_batch(alerts: list[AlertResult]) -> dict[str, bool]:
     return results
 
 
-async def send_web_push_alerts_batch(alerts: list[AlertResult]) -> None:
-    """세력 포착 알림을 Web Push로도 발송."""
+async def send_push_alerts_batch(alerts: list[AlertResult]) -> None:
+    """세력 포착 알림을 Web Push + FCM 모두 발송."""
     from app.services.push_service import send_web_push
+    from app.services.fcm_service import send_fcm
 
     for alert in alerts:
         emoji = _SEVERITY_EMOJI.get(alert.severity, "🔔")
-        await send_web_push(
-            title=f"{emoji} {alert.title}",
-            body=f"{alert.corp_name} — {alert.comment}",
-            url="/",
-        )
+        title = f"{emoji} {alert.title}"
+        body = f"{alert.corp_name} — {alert.comment}"
+        await send_web_push(title=title, body=body, url="/")
+        await send_fcm(title=title, body=body, data={"url": "/"})

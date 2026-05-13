@@ -69,6 +69,13 @@ if _db_url:
                     value TEXT NOT NULL
                 )
             """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS fcm_tokens (
+                    token      TEXT PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """))
         USE_DB = True
         print("[db] PostgreSQL 연결 완료, 테이블 준비됨")
     except Exception as e:
