@@ -27,48 +27,94 @@ async def market_overview():
 
 @router.get("/krx-night-test")
 async def krx_night_test():
-    """KRX 야간선물 API 탐색용 (임시)"""
+    """KRX 야간선물 API 탐색용 (임시) - 2차 시도"""
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
     results = {}
 
-    async with httpx.AsyncClient(timeout=10) as c:
-        # ── KRX POST API 후보 ─────────────────────────────────────────────
-        krx_candidates = [
-            ("bld1_NFUT", {"bld": "dbms/MDC/STAT/standard/MDCSTAT02901", "locale": "ko_KR", "mktId": "NFUT", "trdDd": today}),
-            ("bld2_KNX",  {"bld": "dbms/MDC/STAT/standard/MDCSTAT02901", "locale": "ko_KR", "mktId": "KNX",  "trdDd": today}),
-            ("bld3_NFUT", {"bld": "dbms/MDC/STAT/standard/MDCSTAT02401", "locale": "ko_KR", "mktId": "NFUT", "trdDd": today}),
-            ("bld4_NFUT", {"bld": "dbms/MDC/STAT/standard/MDCSTAT02001", "locale": "ko_KR", "mktId": "NFUT", "trdDd": today}),
-            ("bld5_NFUT", {"bld": "dbms/MDC/STAT/standard/MDCSTAT034",   "locale": "ko_KR", "mktId": "NFUT", "trdDd": today}),
-            ("bld6_KNX",  {"bld": "dbms/MDC/STAT/standard/MDCSTAT034",   "locale": "ko_KR", "mktId": "KNX",  "trdDd": today}),
-        ]
-        for label, payload in krx_candidates:
-            try:
-                r = await c.post(
-                    "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
-                    data=payload,
-                    headers=_KRX_HEADERS,
-                )
-                results[label] = {"status": r.status_code, "body": r.text[:500]}
-            except Exception as e:
-                results[label] = {"error": str(e)}
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+        # ── 1. KRX 세션 쿠키 먼저 획득 후 POST ───────────────────────────
+        try:
+            session_r = await c.get("https://data.krx.co.kr/", headers=_KRX_HEADERS)
+            cookies = dict(session_r.cookies)
+            results["krx_session"] = {"status": session_r.status_code, "cookies": list(cookies.keys())}
 
-        # ── Naver 야간선물 후보 ───────────────────────────────────────────
-        naver_codes = ["K2NF", "K200NF", "NKOSPI200F", "K200F2", "KNF"]
-        for code in naver_codes:
-            try:
-                r = await c.get(f"https://m.stock.naver.com/api/index/{code}/basic", headers=_HEADERS, timeout=5)
-                results[f"naver_{code}"] = {"status": r.status_code, "body": r.text[:300]}
-            except Exception as e:
-                results[f"naver_{code}"] = {"error": str(e)}
+            payload = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT02901",
+                "locale": "ko_KR",
+                "mktId": "NFUT",
+                "trdDd": today,
+                "share": "1",
+                "money": "1",
+                "csvxls_isNo": "false",
+            }
+            r2 = await c.post(
+                "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+                data=payload,
+                headers=_KRX_HEADERS,
+                cookies=cookies,
+            )
+            results["krx_session_post"] = {"status": r2.status_code, "body": r2.text[:500]}
+        except Exception as e:
+            results["krx_session"] = {"error": str(e)}
 
-        # ── KRX 야간선물 직접 페이지 크롤링 시도 ─────────────────────────
+        # ── 2. Naver stock 엔드포인트 (index 아닌 stock으로) ──────────────
+        for code in ["101S9000", "101S6000", "K200F"]:
+            try:
+                r = await c.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=_HEADERS, timeout=5)
+                results[f"naver_stock_{code}"] = {"status": r.status_code, "body": r.text[:300]}
+            except Exception as e:
+                results[f"naver_stock_{code}"] = {"error": str(e)}
+
+        # ── 3. Naver 선물 전용 API ────────────────────────────────────────
         try:
             r = await c.get(
-                "https://data.krx.co.kr/contents/MDC/STAT/standard/MDCSTAT02901.cmd",
-                headers=_KRX_HEADERS,
+                "https://m.stock.naver.com/api/futures/101S9000/basic",
+                headers=_HEADERS, timeout=5
             )
-            results["krx_page"] = {"status": r.status_code, "body": r.text[:300]}
+            results["naver_futures_101S9000"] = {"status": r.status_code, "body": r.text[:300]}
         except Exception as e:
-            results["krx_page"] = {"error": str(e)}
+            results["naver_futures_101S9000"] = {"error": str(e)}
+
+        # ── 4. 네이버 야간선물 검색 ───────────────────────────────────────
+        try:
+            r = await c.get(
+                "https://m.stock.naver.com/api/search/rapid?query=코스피200야간선물&target=index,stock",
+                headers=_HEADERS, timeout=5
+            )
+            results["naver_search"] = {"status": r.status_code, "body": r.text[:500]}
+        except Exception as e:
+            results["naver_search"] = {"error": str(e)}
+
+        # ── 5. 다음(카카오) 파이낸스 ─────────────────────────────────────
+        for code in ["K200F", "KOSPI200F", "K2NF"]:
+            try:
+                r = await c.get(
+                    f"https://finance.daum.net/api/quotes/FUT:{code}",
+                    headers={**_HEADERS, "Referer": "https://finance.daum.net/"},
+                    timeout=5,
+                )
+                results[f"daum_{code}"] = {"status": r.status_code, "body": r.text[:300]}
+            except Exception as e:
+                results[f"daum_{code}"] = {"error": str(e)}
+
+        # ── 6. Yahoo Finance ^KS200 상세 확인 ────────────────────────────
+        try:
+            r = await c.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/%5EKS200",
+                params={"range": "1d", "interval": "5m"},
+                headers={**_HEADERS, "Accept": "application/json"},
+                timeout=8,
+            )
+            d = r.json()
+            meta = (d.get("chart", {}).get("result") or [{}])[0].get("meta", {})
+            results["yahoo_KS200"] = {
+                "symbol": meta.get("symbol"),
+                "price": meta.get("regularMarketPrice"),
+                "prev": meta.get("chartPreviousClose"),
+                "name": meta.get("shortName"),
+                "exchangeName": meta.get("exchangeName"),
+            }
+        except Exception as e:
+            results["yahoo_KS200"] = {"error": str(e)}
 
     return {"date": today, "results": results}
