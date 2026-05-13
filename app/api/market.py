@@ -27,94 +27,91 @@ async def market_overview():
 
 @router.get("/krx-night-test")
 async def krx_night_test():
-    """KRX 야간선물 API 탐색용 (임시) - 2차 시도"""
+    """KRX 야간선물 API 탐색용 (임시) - 3차 시도"""
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
     results = {}
 
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-        # ── 1. KRX 세션 쿠키 먼저 획득 후 POST ───────────────────────────
+        # ── 1. Naver PC Finance API (fchart / polling) ────────────────────
+        for code in ["101S9000", "101S6000"]:
+            try:
+                r = await c.get(
+                    f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=1&requestType=0",
+                    headers=_HEADERS, timeout=5
+                )
+                results[f"fchart_{code}"] = {"status": r.status_code, "body": r.text[:300]}
+            except Exception as e:
+                results[f"fchart_{code}"] = {"error": str(e)}
+
+        # ── 2. Naver polling realtime API ─────────────────────────────────
+        for code in ["101S9000", "101S6000"]:
+            try:
+                r = await c.get(
+                    f"https://polling.finance.naver.com/api/realtime.naver?query=SERVICE_ITEM:{code}",
+                    headers=_HEADERS, timeout=5
+                )
+                results[f"polling_{code}"] = {"status": r.status_code, "body": r.text[:400]}
+            except Exception as e:
+                results[f"polling_{code}"] = {"error": str(e)}
+
+        # ── 3. Naver domestic futures total page ──────────────────────────
+        try:
+            r = await c.get(
+                "https://m.stock.naver.com/domestic/futures/101S9000/total",
+                headers=_HEADERS, timeout=5
+            )
+            results["naver_domestic_101S9000"] = {"status": r.status_code, "body": r.text[:300]}
+        except Exception as e:
+            results["naver_domestic_101S9000"] = {"error": str(e)}
+
+        # ── 4. KRX 공개 bld 코드 (KOSPI 지수) 로그인 없이 되는지 확인 ─────
         try:
             session_r = await c.get("https://data.krx.co.kr/", headers=_KRX_HEADERS)
             cookies = dict(session_r.cookies)
-            results["krx_session"] = {"status": session_r.status_code, "cookies": list(cookies.keys())}
-
-            payload = {
-                "bld": "dbms/MDC/STAT/standard/MDCSTAT02901",
+            pub_payload = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT00101",
                 "locale": "ko_KR",
-                "mktId": "NFUT",
                 "trdDd": today,
-                "share": "1",
-                "money": "1",
-                "csvxls_isNo": "false",
             }
             r2 = await c.post(
                 "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
-                data=payload,
+                data=pub_payload,
                 headers=_KRX_HEADERS,
                 cookies=cookies,
             )
-            results["krx_session_post"] = {"status": r2.status_code, "body": r2.text[:500]}
+            results["krx_public_index"] = {"status": r2.status_code, "body": r2.text[:400]}
         except Exception as e:
-            results["krx_session"] = {"error": str(e)}
+            results["krx_public_index"] = {"error": str(e)}
 
-        # ── 2. Naver stock 엔드포인트 (index 아닌 stock으로) ──────────────
-        for code in ["101S9000", "101S6000", "K200F"]:
-            try:
-                r = await c.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=_HEADERS, timeout=5)
-                results[f"naver_stock_{code}"] = {"status": r.status_code, "body": r.text[:300]}
-            except Exception as e:
-                results[f"naver_stock_{code}"] = {"error": str(e)}
-
-        # ── 3. Naver 선물 전용 API ────────────────────────────────────────
+        # ── 5. 한경닷컴 야간선물 ──────────────────────────────────────────
         try:
             r = await c.get(
-                "https://m.stock.naver.com/api/futures/101S9000/basic",
-                headers=_HEADERS, timeout=5
+                "https://finance.hankyung.com/svc/api/quote/domestic/index?category=fut&code=101S9000",
+                headers=_HEADERS, timeout=5,
             )
-            results["naver_futures_101S9000"] = {"status": r.status_code, "body": r.text[:300]}
+            results["hankyung_101S9000"] = {"status": r.status_code, "body": r.text[:300]}
         except Exception as e:
-            results["naver_futures_101S9000"] = {"error": str(e)}
+            results["hankyung_101S9000"] = {"error": str(e)}
 
-        # ── 4. 네이버 야간선물 검색 ───────────────────────────────────────
-        try:
-            r = await c.get(
-                "https://m.stock.naver.com/api/search/rapid?query=코스피200야간선물&target=index,stock",
-                headers=_HEADERS, timeout=5
-            )
-            results["naver_search"] = {"status": r.status_code, "body": r.text[:500]}
-        except Exception as e:
-            results["naver_search"] = {"error": str(e)}
-
-        # ── 5. 다음(카카오) 파이낸스 ─────────────────────────────────────
-        for code in ["K200F", "KOSPI200F", "K2NF"]:
+        # ── 6. Yahoo Finance KOSPI200 선물 후보 재확인 ────────────────────
+        for sym in ["%5EKS200", "NK%3DF", "2KF%3DF", "KOSPIF"]:
             try:
                 r = await c.get(
-                    f"https://finance.daum.net/api/quotes/FUT:{code}",
-                    headers={**_HEADERS, "Referer": "https://finance.daum.net/"},
-                    timeout=5,
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                    params={"range": "5d", "interval": "1d"},
+                    headers={**_HEADERS, "Accept": "application/json"},
+                    timeout=8,
                 )
-                results[f"daum_{code}"] = {"status": r.status_code, "body": r.text[:300]}
+                d = r.json()
+                meta = (d.get("chart", {}).get("result") or [{}])[0].get("meta", {})
+                err = d.get("chart", {}).get("error")
+                results[f"yahoo_{sym}"] = {
+                    "price": meta.get("regularMarketPrice"),
+                    "name": meta.get("shortName"),
+                    "exchange": meta.get("exchangeName"),
+                    "error": err,
+                }
             except Exception as e:
-                results[f"daum_{code}"] = {"error": str(e)}
-
-        # ── 6. Yahoo Finance ^KS200 상세 확인 ────────────────────────────
-        try:
-            r = await c.get(
-                "https://query1.finance.yahoo.com/v8/finance/chart/%5EKS200",
-                params={"range": "1d", "interval": "5m"},
-                headers={**_HEADERS, "Accept": "application/json"},
-                timeout=8,
-            )
-            d = r.json()
-            meta = (d.get("chart", {}).get("result") or [{}])[0].get("meta", {})
-            results["yahoo_KS200"] = {
-                "symbol": meta.get("symbol"),
-                "price": meta.get("regularMarketPrice"),
-                "prev": meta.get("chartPreviousClose"),
-                "name": meta.get("shortName"),
-                "exchangeName": meta.get("exchangeName"),
-            }
-        except Exception as e:
-            results["yahoo_KS200"] = {"error": str(e)}
+                results[f"yahoo_{sym}"] = {"error": str(e)}
 
     return {"date": today, "results": results}
