@@ -6,7 +6,7 @@ from app.services.dart_service import (
     fetch_earnings_disclosures, fetch_company_disclosures_by_code
 )
 from app.services.market_cap_service import filter_small_cap_disclosures, fetch_stock_price
-from app.services.ai_service import analyze_disclosure, analyze_news, analyze_earnings_disclosure
+from app.services.ai_service import analyze_disclosure, analyze_earnings_disclosure
 from app.services.news_service import fetch_stock_news
 
 router = APIRouter(prefix="/disclosures", tags=["공시"])
@@ -85,17 +85,6 @@ async def analyze_earnings_endpoint(disclosure: dict[str, Any]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/analyze-news")
-async def analyze_news_endpoint(body: dict[str, Any]):
-    """뉴스 헤드라인 목록 AI 감성 분석"""
-    titles = body.get("titles", [])
-    corp_name = body.get("corp_name", "")
-    try:
-        result = await analyze_news(titles, corp_name)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/prices")

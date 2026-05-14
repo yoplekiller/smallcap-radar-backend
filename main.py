@@ -62,11 +62,12 @@ async def lifespan(app: FastAPI):
     loaded = load_from_disk()
     print(f"[cache] 영속 캐시 {loaded}건 로드 완료")
 
-    # ② 공시 자동 분석: 10분마다
+    # ② 공시 자동 분석: 매일 새벽 6시 1회 (토큰 절약)
     _scheduler.add_job(
         auto_analyze_job,
-        "interval",
-        minutes=10,
+        "cron",
+        hour=6,
+        minute=0,
         id="auto_analyze",
         replace_existing=True,
         kwargs={"days": 1},

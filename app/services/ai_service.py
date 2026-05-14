@@ -59,63 +59,6 @@ key_amount_billion 추출:
 {{"score": 0~10 사이 정수, "sentiment": "positive" 또는 "negative" 또는 "neutral", "summary": "핵심 내용 1~2줄 요약", "reason": "이 점수를 준 이유 한 줄", "key_amount_billion": 억원 단위 숫자 또는 null}}"""
 
 
-NEWS_PROMPT = """당신은 주식 뉴스 분석 전문가입니다.
-아래는 {corp_name}의 최근 뉴스 헤드라인입니다. 분석 후 반드시 JSON 형식으로만 응답하세요.
-
-뉴스 목록:
-{titles}
-
-말투 규칙: summary는 반드시 구어체 종결어미(-음, -함, -있음, -없음, -임)로 작성. 예) "~있다" → "~있음", "~했다" → "~했음".
-
-응답 형식 (JSON만, 다른 텍스트 없이):
-{{"sentiment": "positive" 또는 "negative" 또는 "neutral", "summary": "최근 뉴스 동향 1~2줄 요약", "keywords": ["핵심 키워드 최대 3개"]}}"""
-
-
-async def analyze_news(titles: list[str], corp_name: str) -> dict:
-    """뉴스 헤드라인 목록 감성 분석"""
-    if not titles:
-        return {"sentiment": "neutral", "summary": "분석할 뉴스가 없습니다.", "keywords": []}
-
-    titles_text = "\n".join(f"- {t}" for t in titles)
-    prompt = NEWS_PROMPT.format(corp_name=corp_name or "해당 기업", titles=titles_text)
-
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        return {"sentiment": "neutral", "summary": "", "keywords": [], "error": str(e)}
-
-
-EARNINGS_PROMPT = """당신은 대한민국 소형주 전문 애널리스트입니다.
-아래 기업의 영업실적 공시를 분석하고, 반드시 JSON 형식으로만 응답하세요.
-
-회사명: {corp_name}
-시가총액: {market_cap_억}억원
-공시 제목: {report_nm}
-영업이익 전년동기: {prev_profit}
-영업이익 당기: {curr_profit}
-전년동기 대비 증감: {change_pct}
-
-분석 요청:
-- 이 실적이 소형주 투자자 관점에서 어떤 의미인지 판단
-- 성장세/수익성/시장 기대치 충족 여부를 간결하게 평가
-- 당기 영업이익이 음수(적자)인 경우: 반드시 "여전히 적자" 또는 "손실 지속"임을 명시할 것. 손실이 줄었더라도 "개선"이라는 단어만 쓰지 말고 "적자 폭 축소"처럼 적자 상태임을 드러낼 것
-- 영업이익 데이터가 없을 경우: 공시 제목에서 호재/악재 여부를 판단해 weather를 결정할 것
-
-weather 판정 기준:
-- "sunny": 흑자 유지/전환, 이익 증가, 어닝 서프라이즈
-- "cloudy": 적자 유지/전환, 이익 대폭 감소, 어닝 쇼크
-- "neutral": 데이터 없거나 보합
-
-말투 규칙: summary와 assessment는 반드시 구어체 종결어미(-음, -함, -있음, -없음, -임)로 작성.
-
-응답 형식 (JSON만, 다른 텍스트 없이):
-{{"summary": "핵심 실적 요약 1~2줄", "assessment": "투자자 관점 영향 전망 한 줄", "weather": "sunny 또는 cloudy 또는 neutral"}}"""
 
 
 def _parse_amount(amount_str: str) -> int | None:
@@ -177,7 +120,7 @@ def _fmt_profit(val: int | None) -> str:
 
 
 async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> dict:
-    """영업실적 공시 전용 AI 분석 (전년동기 비교 + 맑음/흐림)"""
+    """영업실적 공시 — 전년동기 비교 + 맑음/흐림 판정 (코드 계산, AI 호출 없음)"""
     key = f"earnings:{_cache_key(disclosure)}"
     cached = _disk.get(key) or _earnings_cache.get(key)
     if cached:
@@ -187,32 +130,6 @@ async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> di
     curr_val = _parse_amount(profit_data.get("current", "")) if has_profit_data else None
     prev_val = _parse_amount(profit_data.get("previous", "")) if has_profit_data else None
     weather, change_pct = _calc_weather(curr_val, prev_val)
-
-    change_str = (
-        f"{change_pct:+.1f}%" if change_pct is not None
-        else "전년동기 데이터 없음"
-    )
-
-    prompt = EARNINGS_PROMPT.format(
-        corp_name=disclosure.get("corp_name", ""),
-        market_cap_억=disclosure.get("market_cap_억", "알 수 없음"),
-        report_nm=disclosure.get("report_nm", ""),
-        prev_profit=_fmt_profit(prev_val),
-        curr_profit=_fmt_profit(curr_val),
-        change_pct=change_str,
-    )
-
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-        )
-        ai_result = json.loads(response.choices[0].message.content)
-    except Exception as e:
-        err_msg = _rate_limit_error(e) if _is_rate_limit(e) else str(e)
-        ai_result = {"summary": "", "assessment": "", "error": err_msg}
 
     # 컨센서스 어닝쇼크 판정 (Naver Finance)
     shock_data: dict = {}
@@ -229,23 +146,16 @@ async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> di
         except Exception:
             pass
 
-    # profit_data 없으면 AI가 공시 제목 기반으로 추론한 weather 사용
-    if not has_profit_data and "weather" in ai_result:
-        ai_weather = ai_result["weather"]
-        if ai_weather in ("sunny", "cloudy", "neutral"):
-            weather = ai_weather
-
     sentiment = "positive" if weather == "sunny" else "negative" if weather == "cloudy" else "neutral"
     result_ai = {
         "score": -1,
         "sentiment": sentiment,
-        "summary": ai_result.get("summary", ""),
-        "reason": ai_result.get("assessment", ""),
+        "summary": "",
+        "reason": "",
         "weather": weather,
         "change_pct": change_pct,
         "curr_profit": curr_val,
         "prev_profit": prev_val,
-        # 컨센서스 비교
         "shock_verdict": shock_data.get("verdict"),
         "shock_verdict_en": shock_data.get("verdict_en"),
         "shock_diff_pct": shock_data.get("diff_pct"),
@@ -253,12 +163,9 @@ async def analyze_earnings_disclosure(disclosure: dict, profit_data: dict) -> di
         "consensus_억": shock_data.get("consensus_억"),
         "consensus_year": shock_data.get("consensus_year"),
     }
-    if "error" in ai_result:
-        result_ai["error"] = ai_result["error"]
 
-    if "error" not in result_ai:
-        _earnings_cache[key] = result_ai
-        _disk.put(key, result_ai)   # 파일에도 저장
+    _earnings_cache[key] = result_ai
+    _disk.put(key, result_ai)
     return {**disclosure, "ai": result_ai}
 
 
