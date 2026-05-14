@@ -137,6 +137,7 @@ async def get_market_overview() -> dict:
             gold, wti,
             usd_krw, jpy_krw,
             breadth, top_vol,
+            fut_sp, fut_nq,
         ) = await asyncio.gather(
             _fetch_naver_index(client, "KOSPI",  "코스피"),
             _fetch_naver_index(client, "KOSDAQ", "코스닥"),
@@ -149,6 +150,8 @@ async def get_market_overview() -> dict:
             _fetch_yahoo(client, "JPYKRW%3DX", "엔/원"),
             _fetch_market_breadth(client),
             _fetch_top_volume(client),
+            _fetch_yahoo(client, "ES%3DF",   "S&P500 선물"),
+            _fetch_yahoo(client, "NQ%3DF",   "나스닥 선물"),
             return_exceptions=False,
         )
 
@@ -165,6 +168,7 @@ async def get_market_overview() -> dict:
         "vix": vix,
         "forex": [usd_krw, jpy_krw],
         "commodities": [gold, wti],
+        "futures": [fut_sp, fut_nq],
         "market_breadth": breadth,
         "top_volume": top_vol,
     }
